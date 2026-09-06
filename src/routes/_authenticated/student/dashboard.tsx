@@ -110,6 +110,22 @@ function StudentDashboard() {
     },
   });
 
+  // ── Class-level Tests ────────────────────────────────────────
+  const { data: classTests = [], isLoading: isClassTestsLoading, error: classTestsError, refetch: refetchClassTests } = useQuery({
+    queryKey: ["student-class-tests", currentUser?.id, studentData?.class_level],
+    enabled: !!currentUser && !!studentData?.class_level,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("tests")
+        .select("id, title, duration_minutes, total_marks, class_level, subjects(name)")
+        .eq("status", "PUBLISHED")
+        .eq("class_level", studentData!.class_level)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return data || [];
+    },
+  });
+
   const {
     data: inProgressAttempt,
   } = useQuery({
@@ -364,6 +380,56 @@ function StudentDashboard() {
             })}
           </div>
         )}
+      {/* ── CLASS TESTS ─────────────────────────────────────── */}
+      <section>
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-xl font-bold">Class Tests</h2>
+          <Button asChild variant="ghost" size="sm" className="gap-1 text-xs">
+            <Link to="/student/tests">
+              View all <ChevronRight className="h-3 w-3" />
+            </Link>
+          </Button>
+        </div>
+        {isClassTestsLoading ? (
+          <SectionSkeleton rows={2} />
+        ) : classTestsError ? (
+          <ErrorRetry message="Unable to load class tests." onRetry={() => void refetchClassTests()} />
+        ) : classTests.length === 0 ? (
+          <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed p-8 text-center">
+            <CheckCircle2 className="h-10 w-10 text-muted-foreground opacity-60" />
+            <p className="font-bold">No tests for your class yet.</p>
+          </div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2">
+            {classTests.slice(0, 4).map((t) => (
+              <Card key={t.id} className="flex flex-col justify-between hover:border-primary/40 transition-colors">
+                <CardHeader className="pb-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <Badge variant="outline" className="text-[10px] mb-1">
+                        {t.subjects?.name ?? \"Subject\"}
+                      </Badge>
+                      <CardTitle className="text-lg font-bold leading-tight">{t.title}</CardTitle>
+                    </div>
+                    <Badge>{`Class ${t.class_level}`}</Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex items-center gap-4 text-xs text-muted-foreground font-semibold">
+                    <span className="flex items-center gap-1">
+                      <Clock className="h-3.5 w-3.5 text-primary" />{t.duration_minutes} min
+                    </span>
+                    <span>{t.total_marks} marks</span>
+                  </div>
+                  <Button asChild className="w-full brand-gradient text-primary-foreground gap-2" size="sm">
+                    <Link to={`/student/tests/${t.id}`}>Start Test</Link>
+                  </Button>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+      </section>
       </section>
 
       {/* ── RECENT RESULT ──────────────────────────────────────────── */}
