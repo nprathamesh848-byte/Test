@@ -422,7 +422,7 @@ function StudentDashboard() {
                     <span>{t.total_marks} marks</span>
                   </div>
                   <Button asChild className="w-full brand-gradient text-primary-foreground gap-2" size="sm">
-                    <Link to={`/student/tests/${t.id}`}>Start Test</Link>
+                    <Link to="/student/tests">Start Test</Link>
                   </Button>
                 </CardContent>
               </Card>
