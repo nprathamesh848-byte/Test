@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { BookOpen, Clock, Play, CheckCircle2, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -18,15 +18,47 @@ export const Route = createFileRoute("/_authenticated/student/tests")({
 function StudentTestsPage() {
   const { currentUser } = useAuth();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+
+  // Fetch student profile for class_level
+  const { data: studentData } = useQuery({
+    queryKey: ["student-profile", currentUser?.id],
+    enabled: !!currentUser,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("students")
+        .select("class_level")
+        .eq("user_id", currentUser!.id)
+        .maybeSingle();
+      if (error) throw error;
+      return data;
+    },
+  });
 
   // Fetch assigned tests
-  const { data: assignments = [], isLoading } = useQuery({
+  const { data: assignments = [], isLoading: isAssignmentsLoading } = useQuery({
     queryKey: ["student-assignments", currentUser?.id],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("test_assignments")
         .select("*, tests(*, subjects(name))")
         .eq("student_id", currentUser!.id);
+      if (error) throw error;
+      return (data || []) as any[];
+    },
+  });
+
+  // Fetch class-level published tests (tests available for student's class)
+  const { data: classTests = [], isLoading: isClassTestsLoading } = useQuery({
+    queryKey: ["student-class-tests-page", currentUser?.id, studentData?.class_level],
+    enabled: !!currentUser && !!studentData?.class_level,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("tests")
+        .select("id, title, duration_minutes, total_marks, class_level, subjects(name)")
+        .eq("status", "PUBLISHED")
+        .eq("class_level", studentData!.class_level)
+        .order("created_at", { ascending: false });
       if (error) throw error;
       return (data || []) as any[];
     },
@@ -46,7 +78,7 @@ function StudentTestsPage() {
     },
   });
 
-  // Start test mutation
+  // Start test from assignment (legacy flow)
   const startTestMutation = useMutation({
     mutationFn: async (assignment: any) => {
       const test = assignment.tests;
@@ -88,10 +120,28 @@ function StudentTestsPage() {
     },
     onSuccess: (attempt) => {
       toast.success("Test started! Good luck.");
-      window.location.href = `/student/take-test/${attempt.id}`;
+      void navigate({ to: '/student/take-test/$attemptId', params: { attemptId: attempt.id } });
     },
     onError: (err: any) => {
       toast.error(err.message || "Could not start test");
+    },
+  });
+
+  // Start class test via RPC (auto-creates assignment + attempt)
+  const startClassTestMutation = useMutation({
+    mutationFn: async (testId: string) => {
+      const { data, error } = await supabase.rpc('start_class_test', {
+        p_test_id: testId,
+      });
+      if (error) throw error;
+      return data as { attempt_id: string; resumed: boolean };
+    },
+    onSuccess: (data) => {
+      toast.success(data.resumed ? 'Resuming test...' : 'Test started! Good luck.');
+      void navigate({ to: '/student/take-test/$attemptId', params: { attemptId: data.attempt_id } });
+    },
+    onError: (err: any) => {
+      toast.error(err.message || 'Could not start test');
     },
   });
 
@@ -101,6 +151,13 @@ function StudentTestsPage() {
   const completedAttempts = attempts.filter(
     (a) => a.status === "SUBMITTED" || a.status === "AUTO_SUBMITTED",
   );
+
+  // Class tests not already assigned to this student
+  const assignedTestIds = new Set(assignments.map((a: any) => a.tests?.id).filter(Boolean));
+  const unassignedClassTests = classTests.filter((t: any) => !assignedTestIds.has(t.id));
+
+  const isLoading = isAssignmentsLoading || isClassTestsLoading;
+  const totalAvailable = availableAssignments.length + unassignedClassTests.length;
 
   return (
     <div className="space-y-8">
@@ -113,7 +170,7 @@ function StudentTestsPage() {
 
       <Tabs defaultValue="available" className="space-y-6">
         <TabsList className="grid w-full grid-cols-2 max-w-md">
-          <TabsTrigger value="available">Available ({availableAssignments.length})</TabsTrigger>
+          <TabsTrigger value="available">Available ({totalAvailable})</TabsTrigger>
           <TabsTrigger value="completed">Completed ({completedAttempts.length})</TabsTrigger>
         </TabsList>
 
@@ -121,16 +178,17 @@ function StudentTestsPage() {
         <TabsContent value="available" className="space-y-4">
           {isLoading ? (
             <Skeleton className="h-40 rounded-2xl" />
-          ) : availableAssignments.length === 0 ? (
+          ) : totalAvailable === 0 ? (
             <Card className="p-8 text-center border-dashed">
               <BookOpen className="h-10 w-10 text-muted-foreground mx-auto mb-3 opacity-60" />
-              <h3 className="text-lg font-bold">No tests assigned right now</h3>
+              <h3 className="text-lg font-bold">No tests available right now</h3>
               <p className="text-sm text-muted-foreground mt-1">
                 Your teacher will assign new assessments here soon!
               </p>
             </Card>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2">
+              {/* Assigned tests */}
               {availableAssignments.map((a) => {
                 const test = a.tests;
                 return (
@@ -166,6 +224,40 @@ function StudentTestsPage() {
                   </Card>
                 );
               })}
+
+              {/* Class-level tests (not yet assigned) */}
+              {unassignedClassTests.map((t: any) => (
+                <Card
+                  key={t.id}
+                  className="hover:border-primary/40 transition-colors flex flex-col justify-between"
+                >
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <Badge variant="outline">Class {t.class_level}</Badge>
+                      <Badge className="bg-secondary text-secondary-foreground">
+                        {t.subjects?.name ?? "Subject"}
+                      </Badge>
+                    </div>
+                    <CardTitle className="text-xl font-bold mt-2">{t.title}</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-center gap-4 text-xs font-semibold text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <Clock className="h-3.5 w-3.5 text-primary" /> {t.duration_minutes}{" "}
+                        Minutes
+                      </span>
+                      <span>Total Marks: {t.total_marks}</span>
+                    </div>
+                    <Button
+                      onClick={() => startClassTestMutation.mutate(t.id)}
+                      disabled={startClassTestMutation.isPending}
+                      className="w-full brand-gradient text-primary-foreground gap-2"
+                    >
+                      <Play className="h-4 w-4" /> Start Test
+                    </Button>
+                  </CardContent>
+                </Card>
+              ))}
             </div>
           )}
         </TabsContent>

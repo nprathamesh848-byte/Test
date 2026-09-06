@@ -1,5 +1,6 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   BookOpen,
   Clock,
@@ -45,6 +46,25 @@ export const Route = createFileRoute("/_authenticated/student/dashboard")({
 
 function StudentDashboard() {
   const { currentUser, profile } = useAuth();
+  const navigate = useNavigate();
+
+  // Start a class test directly (auto-creates assignment + attempt)
+  const startClassTestMutation = useMutation({
+    mutationFn: async (testId: string) => {
+      const { data, error } = await supabase.rpc('start_class_test', {
+        p_test_id: testId,
+      });
+      if (error) throw error;
+      return data as { attempt_id: string; resumed: boolean };
+    },
+    onSuccess: (data) => {
+      toast.success(data.resumed ? 'Resuming test...' : 'Test started! Good luck.');
+      void navigate({ to: '/student/take-test/$attemptId', params: { attemptId: data.attempt_id } });
+    },
+    onError: (err: any) => {
+      toast.error(err.message || 'Could not start test');
+    },
+  });
 
   // ── Core data: student record + all attempts + assignments ──────────
   const {
@@ -421,8 +441,13 @@ function StudentDashboard() {
                     </span>
                     <span>{t.total_marks} marks</span>
                   </div>
-                  <Button asChild className="w-full brand-gradient text-primary-foreground gap-2" size="sm">
-                    <Link to="/student/tests">Start Test</Link>
+                  <Button
+                    className="w-full brand-gradient text-primary-foreground gap-2"
+                    size="sm"
+                    onClick={() => startClassTestMutation.mutate(t.id)}
+                    disabled={startClassTestMutation.isPending}
+                  >
+                    <Play className="h-3.5 w-3.5" /> Start Test
                   </Button>
                 </CardContent>
               </Card>
