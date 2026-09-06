@@ -407,7 +407,7 @@ function StudentDashboard() {
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <Badge variant="outline" className="text-[10px] mb-1">
-                        {t.subjects?.name ?? \"Subject\"}
+                        {t.subjects?.name ?? "Subject"}
                       </Badge>
                       <CardTitle className="text-lg font-bold leading-tight">{t.title}</CardTitle>
                     </div>
